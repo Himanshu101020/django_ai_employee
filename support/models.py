@@ -11,7 +11,7 @@ class Conversation(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"Converstaion: {self.user} - {self.order.id}"
+        return f"Converstaion: {self.user.id} - {self.order.id}"
 
 class Message(models.Model):
     ROLE_CHOICES = {
