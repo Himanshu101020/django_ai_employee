@@ -11,12 +11,12 @@ class Conversation(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"Converstaion: {self.user.id} - {self.order.id}"
+        return f"Converstaion: {self.user.username}/order #{self.order.id}"
 
 class Message(models.Model):
     ROLE_CHOICES = {
-        ('customer', 'Customer'),
-        ('agent', 'Agent')      
+        ('user', 'User'),
+        ('assistant', 'Assistant')      
     }
     conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='messages')
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)

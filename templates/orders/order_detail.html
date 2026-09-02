@@ -330,9 +330,23 @@
          
          <!-- Message History Area -->
          <div id="chat-messages" class="chat-messages p-3 d-flex flex-column gap-2">
-          <div class="agent-message p-2 px-3" style="font-size: 13px; max-width: 85%;">
-            Hi user, I am your AI assistant. How can I help you with your order today?
-          </div>
+          {% if conversation %}
+            {% for message in previous_messages %}
+            {% if message.role == 'user' %}
+              <div class="customer-message p-2 px-3" style="font-size: 13px; max-width: 85%;">
+                {{ message.content }}
+                </div>
+              {% else %}
+                <div class="agent-message p-2 px-3" style="font-size: 13px; max-width: 85%;">
+                  {{ message.content }}
+                </div>
+              {% endif %}
+            {% endfor %}
+          {% else %}
+            <div class="agent-message p-2 px-3" style="font-size: 13px; max-width: 85%;">
+              Hi user, I am your AI assistant. How can I help you with your order today?
+            </div>
+          {% endif %}
          </div>
 
          <!-- User Input Area -->
@@ -347,6 +361,20 @@
 </div>
 <script>
   
+  function showTyping(){
+    const messages = document.getElementById("chat-messages")
+    messages.insertAdjacentHTML("beforeend", `
+    <div id="typing-indicator" class="agent-message p-2" style="font-size:13px; max-width:85%">
+      Typing...
+    </div>
+    `)
+    messages.scrollTop = messages.scrollHeight
+  }
+
+  function hideTyping(){
+    document.getElementById("typing-indicator").remove()
+  }
+
   function showChat(){
     document.getElementById("help-card").style.display = "none";
 
@@ -369,7 +397,7 @@
     messages.scrollTop = messages.scrollHeight;
   }
 
-  function sendMessage(){
+  async function sendMessage(){
     const input = document.getElementById("chat-input");
     const message = input.value.trim();
 
@@ -379,10 +407,42 @@
     appendMessage(message, "customer");
 
     input.value = '';
-    // input.disabled = true;
+    input.disabled = true;
+    
+
+    const typingTimeout = setTimeout(() => showTyping(), 1000);
+    
+    try{
+      const response = await fetch('/support/chat/{{order.id}}/',{
+        method: 'POST',
+        headers:{
+            'Content-type': 'application/json',
+            'X-CSRFToken': '{{csrf_token}}',
+        },
+        body: JSON.stringify({
+          'message': message
+        })
+      })
+
+      const data = await response.json()
+      hideTyping()
+      appendMessage(data.reply, 'agent')
+      input.disabled = false;
+      input.focus();
+
+    }catch(error){
+      console.error("Failed to send message:", error);
+      appendMessage("Sorry, something went wrong.", "agent")
+      input.disabled = false;
+      input.focus();
+    }finally{
+      clearTimeout(typingTimeout);
+      hideTyping();
+    }
+
   }
 
-  // send message on Enter key
+  // send message on Enter key 
   document.getElementById("chat-input").addEventListener("keydown", function(e){
     if(e.key === 'Enter') sendMessage();
   })

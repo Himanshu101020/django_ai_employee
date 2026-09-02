@@ -40,7 +40,6 @@ def get_refund_history(user_id):
 
 def check_delivery_status(tracking_number, carrier):
     result = DELIVERY_DATA.get(tracking_number)
-    print(result)
 
     if not result:
         default_response = {
