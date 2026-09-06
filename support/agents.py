@@ -1,7 +1,7 @@
 from google import genai
 from django.conf import settings
 from google.genai import types
-from .tools import get_order_details, get_refund_history, check_delivery_status
+from .tools import get_order_details, get_refund_history, check_delivery_status, get_customer_risk_profile
 from .models import Conversation, Message, AgentLog
 
 client = genai.Client(api_key=settings.GEMINI_API_KEY)
@@ -29,6 +29,8 @@ Important Rules:
 3. If a refund decision is requested, tell the customer you are checking with your team/manager while you evaluate the request.
 4. Don't respond in markdown format.
 
+ESCALATION PROTOCOL:
+If a customer explicitly requests a refund or compensation, you MUST immediately execute the escalate_to_manager tool. Do not ask the customer for permission. Do not tell the customer you are preparing a summary. Gather the facts using your database tools, and then immediately call the escalate_to_manager tool in the exact same thought process.
 """
 MANAGER_SYSTEM_PROMPT = """
 You are a senior support manager at CoolBreeze AC.
@@ -52,6 +54,31 @@ Important rules:
 - Keep your response concise and professional
 """
 
+RISK_SYSTEM_PROMPT = """
+You are a Fraud Risk Analyst at Cool Breeze AC.
+A support manager has sent you a customer profile for risk assessment.
+
+Your Job:
+1. Analyze the customer's order and refund patterns.
+2. Identify suspicious behavior.
+3. Return a clear risk verdict.
+
+Risk Levels:
+- LOW: Genuine customer, normal behavior.
+- MEDIUM: Some suspicious signals, proceed with caution.
+- HIGH: Clear fraud pattern, refund denial recommended.
+
+Response Format:
+- Risk Level: [Low/Medium/High]
+- Key Signals: [What you found suspicious or genuine]
+- Recommendation: [What the manager should do]
+
+Important Rules:
+- Be objective. Base your verdict on data only.
+- One bad refund does not make someone fraudulent. Customers face genuine issues.
+- Look for holistic patterns across their history, not just isolated incidents.
+
+"""
 
 # 2. Tool Schemas
 SUPPORT_TOOLS = [
@@ -124,6 +151,48 @@ SUPPORT_TOOLS = [
     )
 ]
 
+MANAGER_TOOLS = [
+     types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="assess_fraud_risk",
+                description="Consults the Risk Agent to assess fraud risk for a customer. Use this when a refund request looks suspicious or the customer has multiple refund requests. Pass the user ID to get a risk verdict.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "user_id":types.Schema(
+                           type=types.Type.INTEGER,
+                           description="The user ID to assess fraud risk for." 
+                        )
+                    },
+                    required = ["user_id"]
+                )
+            )
+        ]
+     )
+]
+
+RISK_TOOLS = [
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="get_customer_risk_profile",
+                description="Get complete risk profile for a customer including order history, refund patterns, and ratio. Use this to assess the fraud risk.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "user_id":types.Schema(
+                           type=types.Type.INTEGER,
+                           description="The user ID to assess the risk for." 
+                        )
+                    },
+                    required = ["user_id"]
+                )
+            )
+        ]
+    )
+]
+
 # 3. Execute Tool Function
 def execute_tool(tool_name, tool_input):
     if tool_name == 'get_order_details':
@@ -137,15 +206,24 @@ def execute_tool(tool_name, tool_input):
             tracking_number=tool_input['tracking_number'],
             carrier=tool_input['carrier']
             )
+    
     elif tool_name == 'escalate_to_manager':
-        print("Tool input=>>>", tool_input)
         case_summary = tool_input.get("case_summary")
-        print(f"--- ESCALATING TO MANAGER ---\n{case_summary}")
-
+        print("case_summary===>", case_summary)
         decision = run_manager_agent(case_summary)
-        print(f"--- MANAGER DECISION ---\n{decision}")
-
+        print("Decision====>", decision)
         return decision
+
+    elif tool_name == 'assess_fraud_risk':
+        user_id = tool_input['user_id']
+        print(f"-> Manager consulting Risk Agent for User ID: {user_id}")
+        verdict = run_risk_agent(user_id)
+        print(f"-> Risk Verdict Received: {verdict}")
+        return verdict
+
+    elif tool_name == 'get_customer_risk_profile':
+        user_id = tool_input['user_id']
+        return get_customer_risk_profile(user_id)
 
     else:
         return f"Error: Tool '{tool_name}' is not recognized."
@@ -231,6 +309,7 @@ def run_manager_agent(case_summary):
             config=types.GenerateContentConfig(
                 system_instruction=MANAGER_SYSTEM_PROMPT,
                 max_output_tokens=1024,
+                tools=MANAGER_TOOLS
             )
         )
 
@@ -247,7 +326,48 @@ def run_manager_agent(case_summary):
                     )
                 )
             manager_messages.append(
-                types.content(role="user", parts=tool_responses)
+                types.Content(role="user", parts=tool_responses)
+            )
+        else:
+            return response.text
+
+def run_risk_agent(user_id):
+    initial_command = f"Please assess the fraud risk for user ID {user_id}. Use your tool to get their profile and return a verdict."
+
+    risk_messages = [
+        {
+            'role': 'user',
+            'parts':[{'text': initial_command}]
+        }
+    ]
+
+    while True:
+        response = client.models.generate_content(
+            model=gemini_model,
+            contents=risk_messages,
+            config=types.GenerateContentConfig(
+                system_instruction=RISK_SYSTEM_PROMPT,
+                max_output_tokens=1024,
+                tools=RISK_TOOLS
+            )
+        )
+
+        if response.function_calls:
+            risk_messages.append(response.candidates[0].content)
+
+            tool_responses=[]
+            for call in response.function_calls:
+                print(f"Call===> {call.name} {call.args}" )
+                raw_result = execute_tool(call.name, call.args)
+                tool_responses.append(
+                    types.Part.from_function_response(
+                        name=call.name,
+                        response={'result': raw_result}
+                    )
+                )
+            
+            risk_messages.append(
+                types.Content(role="user", parts=tool_responses)
             )
         else:
             return response.text
