@@ -41,4 +41,4 @@ class AgentLog(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.event_type}: {self.message[:40]}"
+        return f"({self.event_type}): {self.message[:40]}"

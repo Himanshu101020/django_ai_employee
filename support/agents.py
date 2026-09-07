@@ -194,7 +194,7 @@ RISK_TOOLS = [
 ]
 
 # 3. Execute Tool Function
-def execute_tool(tool_name, tool_input):
+def execute_tool(tool_name, tool_input, conversation_id=None):
     if tool_name == 'get_order_details':
         return get_order_details(order_id=tool_input['order_id'])
 
@@ -209,16 +209,12 @@ def execute_tool(tool_name, tool_input):
     
     elif tool_name == 'escalate_to_manager':
         case_summary = tool_input.get("case_summary")
-        print("case_summary===>", case_summary)
-        decision = run_manager_agent(case_summary)
-        print("Decision====>", decision)
+        decision = run_manager_agent(case_summary, conversation_id)
         return decision
 
     elif tool_name == 'assess_fraud_risk':
         user_id = tool_input['user_id']
-        print(f"-> Manager consulting Risk Agent for User ID: {user_id}")
-        verdict = run_risk_agent(user_id)
-        print(f"-> Risk Verdict Received: {verdict}")
+        verdict = run_risk_agent(user_id, conversation_id)
         return verdict
 
     elif tool_name == 'get_customer_risk_profile':
@@ -252,11 +248,11 @@ def run_support_agent(conversation_id, order_id, user_id):
 
     # The Agent while loop
     # MAX_LOOPS = 5  # Safety mechanism to prevent infinite loops
-    loop_count = 0
+    # loop_count = 0
 
     # while loop_count < MAX_LOOPS:
     while True:
-        loop_count += 1
+        # loop_count += 1
         
         # Trigger the API Call
         response = client.models.generate_content(
@@ -271,15 +267,19 @@ def run_support_agent(conversation_id, order_id, user_id):
 
         # Check if the AI wants to use a tool
         if response.function_calls:
-            print(f"Loop {loop_count}: AI is calling tools...")
             conversation_messages.append(response.candidates[0].content)
 
             # Execute all requested tools
             tool_responses = [] 
             for call in response.function_calls:
-                print(f"-> Executing: {call.name} with {call.args}")
-                raw_result = execute_tool(call.name, call.args)
-
+                AgentLog.objects.create(conversation=conv, event_type='tool_call', message=f"Calling tool {call.name} with {call.args}")
+                
+                raw_result = execute_tool(call.name, call.args, conversation_id)
+                AgentLog.objects.create(
+                    conversation=conv, 
+                    event_type="tool_result", 
+                    message=f"{call.name} returned {str(raw_result)[:200]}"
+                    )
                 # Format the result specifically for Gemini
                 tool_responses.append(
                     types.Part.from_function_response(
@@ -294,12 +294,21 @@ def run_support_agent(conversation_id, order_id, user_id):
             )
             
         else:
-            # E. The AI generated standard text. Break the loop and return it.
-            return response.text
+            # The AI generated standard text. Break the loop and return it.
+            result = response.text
+            AgentLog.objects.create(conversation=conv, event_type="final_reply", message=result)
+            return result
             
     # return "Error: I required too many steps to process this request."
 
-def run_manager_agent(case_summary):
+def run_manager_agent(case_summary, conversation_id):
+    conv = Conversation.objects.get(id=conversation_id)
+
+    AgentLog.objects.create(
+                    conversation=conv, 
+                    event_type="manager", 
+                    message=f"Case received for review: {case_summary[:200]}..."
+                    )
     manager_messages = [{'role': 'user', 'parts': [{'text': case_summary}]}]
 
     while True:
@@ -318,7 +327,12 @@ def run_manager_agent(case_summary):
 
             tool_responses = []
             for call in response.function_calls:
-                raw_result = execute_tool(call.name, call.args)
+                AgentLog.objects.create(
+                    conversation=conv,
+                    event_type="manager",
+                    message=f"Consulting Risk Agent for fraud assessment."
+                )
+                raw_result = execute_tool(call.name, call.args, conversation_id)
                 tool_responses.append(
                     types.Part.from_function_response(
                         name=call.name,
@@ -329,9 +343,21 @@ def run_manager_agent(case_summary):
                 types.Content(role="user", parts=tool_responses)
             )
         else:
-            return response.text
+            decision = response.text
+            AgentLog.objects.create(
+                conversation=conv,
+                event_type="manager",
+                message=f"Decision: {decision[:200]}..."
+            )
+            return decision
 
-def run_risk_agent(user_id):
+def run_risk_agent(user_id, conversation_id):
+    conv = Conversation.objects.get(id=conversation_id)
+    AgentLog.objects.create(
+        conversation=conv,
+        event_type="risk",
+        message=f"Starting fraud assessment for user ID {user_id}"
+    )
     initial_command = f"Please assess the fraud risk for user ID {user_id}. Use your tool to get their profile and return a verdict."
 
     risk_messages = [
@@ -357,8 +383,12 @@ def run_risk_agent(user_id):
 
             tool_responses=[]
             for call in response.function_calls:
-                print(f"Call===> {call.name} {call.args}" )
-                raw_result = execute_tool(call.name, call.args)
+                AgentLog.objects.create(
+                    conversation=conv,
+                    event_type="risk",
+                    message=f"Calling {call.name} to get customer risk profile."
+                )
+                raw_result = execute_tool(call.name, call.args, conversation_id)
                 tool_responses.append(
                     types.Part.from_function_response(
                         name=call.name,
@@ -370,4 +400,10 @@ def run_risk_agent(user_id):
                 types.Content(role="user", parts=tool_responses)
             )
         else:
-            return response.text
+            verdict = response.text
+            AgentLog.objects.create(
+                conversation=conv,
+                event_type="risk",
+                message=f"Verdict: {verdict[:200]}"
+                )
+            return verdict

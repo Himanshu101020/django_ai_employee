@@ -41,3 +41,11 @@ def chat(request, order_id):
 
     return JsonResponse({'error': 'Invalid request method'}, status=405)
 
+def dashboard(request):
+    conversations = Conversation.objects.all().order_by('-created_at')
+    print("Conversations===>>>", conversations)
+    context = {
+        'conversations':conversations
+    }
+
+    return render(request, 'dashboard.html', context)
