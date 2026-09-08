@@ -10,6 +10,14 @@ class Conversation(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='conversations')
     created_at = models.DateTimeField(auto_now_add=True)
 
+    @property
+    def manager_involved(self):
+        return self.agentlogs.filter(event_type='manager').exists()
+
+    @property
+    def risk_involved(self):
+        return self.agentlogs.filter(event_type='risk').exists()
+    
     def __str__(self):
         return f"Converstaion: {self.user.username}/order #{self.order.id}"
 
