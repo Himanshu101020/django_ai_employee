@@ -3,6 +3,7 @@ from django.conf import settings
 from google.genai import types
 from .tools import get_order_details, get_refund_history, check_delivery_status, get_customer_risk_profile
 from .models import Conversation, Message, AgentLog
+from .event_queue import publish, SENTINEL
 
 client = genai.Client(api_key=settings.GEMINI_API_KEY)
 gemini_model = settings.GEMINI_MODEL
@@ -275,9 +276,15 @@ def run_support_agent(conversation_id, order_id, user_id):
             # Execute all requested tools
             tool_responses = [] 
             for call in response.function_calls:
-                AgentLog.objects.create(conversation=conv, event_type='tool_call', message=f"Calling tool {call.name} with {call.args}")
+                event = {"type":"tool_call", "message": f"Calling tool {call.name} with {call.args}"}
+                publish(conversation_id, event)
                 
+                AgentLog.objects.create(conversation=conv, event_type='tool_call', message=f"Calling tool {call.name} with {call.args}")
+                 
                 raw_result = execute_tool(call.name, call.args, conversation_id)
+                event = {"type":"tool_result", "message":f"{call.name} returned {str(raw_result)[:200]}"}
+                publish(conversation_id, event)
+
                 AgentLog.objects.create(
                     conversation=conv, 
                     event_type="tool_result", 
@@ -299,14 +306,21 @@ def run_support_agent(conversation_id, order_id, user_id):
         else:
             # The AI generated standard text. Break the loop and return it.
             result = response.text
+            event = {
+                "type": "final",
+                "message":result
+            }
+            publish(conversation_id, event)
             AgentLog.objects.create(conversation=conv, event_type="final_reply", message=result)
+            publish(conversation_id, SENTINEL)
             return result
             
     # return "Error: I required too many steps to process this request."
 
 def run_manager_agent(case_summary, conversation_id):
     conv = Conversation.objects.get(id=conversation_id)
-
+    event = {"type":"manager", "message":f"Case received for review: {case_summary[:200]}..."}
+    publish(conversation_id, event)
     AgentLog.objects.create(
                     conversation=conv, 
                     event_type="manager", 
@@ -330,6 +344,8 @@ def run_manager_agent(case_summary, conversation_id):
 
             tool_responses = []
             for call in response.function_calls:
+                event = {"type": "manager", "message": f"Consulting Risk Agent for fraud assessment."}
+                publish(conversation_id, event)
                 AgentLog.objects.create(
                     conversation=conv,
                     event_type="manager",
@@ -347,6 +363,8 @@ def run_manager_agent(case_summary, conversation_id):
             )
         else:
             decision = response.text
+            event = {"type":"manager", "message":f"Decision: {decision[:200]}..."}
+            publish(conversation_id, event)
             AgentLog.objects.create(
                 conversation=conv,
                 event_type="manager",
@@ -356,6 +374,8 @@ def run_manager_agent(case_summary, conversation_id):
 
 def run_risk_agent(user_id, conversation_id):
     conv = Conversation.objects.get(id=conversation_id)
+    event = {"type":"risk", "message":f"Starting fraud assessment for user ID {user_id}"}
+    publish(conversation_id, event)
     AgentLog.objects.create(
         conversation=conv,
         event_type="risk",
@@ -386,12 +406,15 @@ def run_risk_agent(user_id, conversation_id):
 
             tool_responses=[]
             for call in response.function_calls:
+                event = {"type":"risk", "message":f"Calling {call.name} to get customer risk profile."}
+                publish(conversation_id, event)
                 AgentLog.objects.create(
                     conversation=conv,
                     event_type="risk",
                     message=f"Calling {call.name} to get customer risk profile."
                 )
                 raw_result = execute_tool(call.name, call.args, conversation_id)
+                event = {"type":"risk", "message":raw_result}
                 tool_responses.append(
                     types.Part.from_function_response(
                         name=call.name,
@@ -404,6 +427,8 @@ def run_risk_agent(user_id, conversation_id):
             )
         else:
             verdict = response.text
+            event = {"type":"risk", "message": verdict}
+            publish(conversation_id, event)
             AgentLog.objects.create(
                 conversation=conv,
                 event_type="risk",

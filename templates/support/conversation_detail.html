@@ -103,7 +103,113 @@
 
 </div>
 <script>
+    function appendMessage(role, message, name){
+        const chatTranscript = document.getElementById('chat-transcript');
+        let html="";
+        if (role==="user_message"){
+            html = `
+            <div>
+                <div style="font-size:11px;color:#adb5bd;margin-bottom:3px;">${name}</div>
+                <div class="bg-light rounded p-2 px-3" style="font-size:13px;max-width:85%;">
+                    ${message}
+                </div>
+            </div>
+            `
+        }else {
+            // Layout for Maya (Right-aligned, purple bubble)
+            html = `
+                <div class="text-end">
+                    <div style="font-size:11px;color:#adb5bd;margin-bottom:3px;">${name}</div>
+                    <div class="rounded p-2 px-3 d-inline-block text-start" 
+                         style="font-size:13px;max-width:85%;background:#ede9fe;color:#3C3489;">
+                        ${message}
+                    </div>
+                </div>
+            `;
+        }
+
+        chatTranscript.insertAdjacentHTML("beforeend", html);
+        chatTranscript.scrollTop = chatTranscript.scrollHeight;
+    }
+
+    function showSpinner(){
+        const agentActivity = document.getElementById("agent-activity");
+        const spinnerHtml = `
+            <div id="agent-spinner" class="text-center my-3">
+                <div class="spinner-border spinner-border-sm text-secondary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+        `;
+
+        agentActivity.insertAdjacentHTML("beforeend", spinnerHtml);
+        agentActivity.scrollTop = agentActivity.scrollHeight;
+    }
+
+    function hideSpinner(){
+        document.getElementById("agent-spinner")?.remove();
+    }
+    
+    function appendLog(type, message){
+        const agentActivity = document.getElementById("agent-activity");
+        const time = new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", hour12:true})
+        const badgeColors = {
+            "tool_call": "bg-primary",
+            "tool_result": "bg-secondary",
+            "manager": "bg-warning text-dark",
+            "risk": "bg-danger",
+            "final": "bg-success"
+        }
+        const badgeColor = badgeColors[type] || "bg-secondary";
+        const html = `
+        <div>
+        <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="badge ${badgeColor}" style="font-size:10px;">${type}</span>
+            <span class="text-muted" style="font-size:11px;">${time}</span>
+        </div>
+        <p class="mb-0 text-muted" style="font-size:12px;">${message}</p>
+        </div>
+        `
+        agentActivity.insertAdjacentHTML("beforeend", html);
+        agentActivity.scrollTop = agentActivity.scrollHeight;
+    }
+    
+    const conversation_id = "{{conversation.id}}"
+        
+    // Open the continuous SSE connection to the backend
+    const source = new EventSource(`/support/dashboard/stream/${conversation_id}/`);
+
+    // Listen for incoming messages from the server
+    source.onmessage = (e)=>{
+        const event = JSON.parse(e.data);
+        if (event.type==='done'){
+            hideSpinner();
+            return
+        }
+        
+        hideSpinner();
+
+        
+        if (event.type==='user_message'){
+            appendMessage(event.type, event.message, event.name);
+        }else if (event.type==='final'){
+            appendMessage(event.type, event.message, "Maya (AI Agent)");
+            appendLog(event.type, event.message);
+        }else{
+            appendLog(event.type, event.message);
+            showSpinner();
+        }
+
+    } 
+    
+    source.onerror=()=>{
+        console.log("SSE Connection Closed or Error occurred.");
+        source.close();
+
+    }
+
     document.addEventListener('DOMContentLoaded', function(){
+
         const chat_transcript = document.getElementById("chat-transcript");
         if (chat_transcript){
             chat_transcript.scrollTop = chat_transcript.scrollHeight;

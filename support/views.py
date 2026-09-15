@@ -6,6 +6,8 @@ from orders.models import Order
 from .models import Conversation, Message
 from .agents import run_support_agent
 from django.contrib.admin.views.decorators import staff_member_required
+from django.http import StreamingHttpResponse
+from .event_queue import subscribe, unsubscribe, publish
 
 # Create your views here.
 def chat(request, order_id):
@@ -22,15 +24,19 @@ def chat(request, order_id):
             order = order,
             user = request.user
         )
-
+        
         Message.objects.create(
             conversation = conversation,
             role = 'user',
             content = user_message
         )
 
+        event = {"type":"user_message", "message":user_message, "name": request.user.first_name};
+        publish(conversation.id, event);
+
         reply = run_support_agent(conversation.id, order.id, request.user.id)
 
+        
         Message.objects.create(
             conversation = conversation,
             role = 'assistant',
@@ -64,3 +70,22 @@ def conversation_detail(request, conversation_id):
     }
 
     return render(request, 'support/conversation_detail.html', context)
+
+@staff_member_required
+def conversation_stream(request, conversation_id):
+    # The Generator Function
+    def event_stream(conversation_id):
+        # Register this browser tab to the event queue
+        q = subscribe(conversation_id)
+        
+        try:
+            while True:
+                # The Blocking Wait: Execution pauses here until an AI agent publishes an event.
+                event = q.get()
+
+                yield f"data: {json.dumps(event)}\n\n"
+        finally:
+            # The Cleanup: If the admin closes the tab, the connection drops, and this block executes.
+            unsubscribe(conversation_id, q)
+
+    return StreamingHttpResponse(event_stream(conversation_id), content_type='text/event-stream')
