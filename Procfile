@@ -1,1 +1,1 @@
-web: gunicorn --bind 0.0.0.0:$PORT dj_ai_employee_main.wsgi
+web: gunicorn --bind 0.0.0.0:$PORT django_ai_emp_main.wsgi
