@@ -1,7 +1,7 @@
 from google import genai
 from django.conf import settings
 from google.genai import types
-from .tools import get_order_details, get_refund_history, check_delivery_status, get_customer_risk_profile
+from .tools import get_order_details, get_refund_history, check_delivery_status, get_customer_risk_profile, search_knowledge_base
 from .models import Conversation, Message, AgentLog
 from .event_queue import publish, SENTINEL
 
@@ -150,6 +150,20 @@ SUPPORT_TOOLS = [
                     },
                     required = ["case_summary"]
                 )
+            ),
+            types.FunctionDeclaration(
+                name="search_knowledge_base",
+                description="Search Cool Breeze AC company documents, including refund policy, warranty policy, and product FAQ. Use this when a customer asks about company policies, warranty coverage, warranty claims, refund eligibility, or any general product information that require accurate company documentation.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "query":types.Schema(
+                            type=types.Type.STRING,
+                            description="The search query to find relevant information from company documents. Be specific, for example, 'refund eligibility within 30 days' instead of just saying 'refund'."
+                        )
+                    },
+                    required = ["query"]
+                )
             )
         ]
     )
@@ -202,31 +216,31 @@ def execute_tool(tool_name, tool_input, conversation_id=None):
     if tool_name == 'get_order_details':
         return get_order_details(order_id=tool_input['order_id'])
 
-    elif tool_name == 'get_refund_history':
+    if tool_name == 'get_refund_history':
         return get_refund_history(user_id=tool_input['user_id'])
 
-    elif tool_name == 'check_delivery_status':
+    if tool_name == 'check_delivery_status':
         return check_delivery_status(
             tracking_number=tool_input['tracking_number'],
             carrier=tool_input['carrier']
             )
     
-    elif tool_name == 'escalate_to_manager':
+    if tool_name == 'escalate_to_manager':
         case_summary = tool_input.get("case_summary")
         decision = run_manager_agent(case_summary, conversation_id)
         return decision
 
-    elif tool_name == 'assess_fraud_risk':
+    if tool_name == 'assess_fraud_risk':
         user_id = tool_input['user_id']
         verdict = run_risk_agent(user_id, conversation_id)
         return verdict
 
-    elif tool_name == 'get_customer_risk_profile':
+    if tool_name == 'get_customer_risk_profile':
         user_id = tool_input['user_id']
         return get_customer_risk_profile(user_id)
 
-    else:
-        return f"Error: Tool '{tool_name}' is not recognized."
+    if tool_name == 'search_knowledge_base':
+        return search_knowledge_base(query=tool_input['query'])
 
 # 4. The Agent Loop
 def run_support_agent(conversation_id, order_id, user_id):
