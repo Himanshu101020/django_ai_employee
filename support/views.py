@@ -3,6 +3,7 @@ import json
 from django.http import JsonResponse
 import time
 from orders.models import Order
+from support.langchain_agents import run_support_agent_langchain
 from .models import Conversation, Message
 from .agents import run_support_agent
 from django.contrib.admin.views.decorators import staff_member_required
@@ -34,7 +35,8 @@ def chat(request, order_id):
         event = {"type":"user_message", "message":user_message, "name": request.user.first_name};
         publish(conversation.id, event);
 
-        reply = run_support_agent(conversation.id, order.id, request.user.id)
+        # reply = run_support_agent(conversation.id, order.id, request.user.id)
+        reply = run_support_agent_langchain(user_message, conversation.id, order.id, request.user.id)
 
         
         Message.objects.create(
